@@ -1,0 +1,56 @@
+If you have an error: Access to namespace and/or LBA range is denied due to lack of access rights (0x4286)
+
+then replace this:
+
+sanitize_all()
+{
+  sres=0
+  get_sanitize_progress || sres=$?
+  case $sres in
+    0)
+      echo
+      echo "Warning!"
+      echo
+      echo "This action irrevocably clears *all* user data from ${DISK}"
+      echo "Pausing five seconds in case you didn't mean to do this..."
+      sleep 5
+      echo "Ok, let's go. Sanitizing ${DISK}:"
+      nvme sanitize -a 2 "${DISK}"
+      echo "Sanitize action started."
+      ;;
+    1) echo "An NVME sanitize action is already in progress."
+      ;;
+    2) # use NVME secure-format since this device does not appear to support sanitize
+      nvme format "${DISK}" -n 1 -s 1 -r
+      return 0
+      ;;
+    *) echo "Unexpected result from sanitize-log"
+      return $sres
+      ;;
+  esac
+
+  while ! get_sanitize_progress ; do
+    sleep 5
+  done
+
+  echo "... sanitize done."
+}
+
+with this:
+
+sanitize_all()
+{
+  echo "Sanitize is disabled due to device restrictions. Performing manual wipe instead."
+  estat "Wiping partition signatures..."
+  wipefs -a "$DISK"
+
+  estat "Zeroing first 100 MiB..."
+  dd if=/dev/zero of="$DISK" bs=10M count=10 status=progress oflag=sync || true
+
+  estat "Zeroing last 100 MiB..."
+  DISK_SIZE_BYTES=$(blockdev --getsize64 "$DISK")
+  SEEK_START=$(( (DISK_SIZE_BYTES / 1048576) - 100 )) # 100 MiB перед концом
+  dd if=/dev/zero of="$DISK" bs=1M count=100 seek="$SEEK_START" status=progress oflag=sync || true
+
+  sync
+}
